@@ -1,0 +1,139 @@
+#!/usr/bin/perl
+#
+# htpdate time poller version 0.9.3
+# Copyright (C) 2005 Eddy Vervest
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# http://www.gnu.org/copyleft/gpl.html
+
+# Proxy setting are read from environment 
+# e.g. in bash for setting environment variables:
+#
+# export HTTP_PROXY='http://wwwproxy.xs4all.nl:8080'
+#
+# or set the proxy value here
+#
+# $ENV{HTTP_PROXY} = 'http://wwwproxy.xs4all.nl:8080';
+#
+# If proxy authentication is required, specify your userid and password
+# in the 'init' subroutine below
+
+# Specify SSL ciphers for HTTPS access (optional)
+#
+# $ENV{HTTPS_VERSION} = 3;
+# $ENV{CRYPT_SSLEAY_CIPHER} = 'DHE-RSA-AES256-SHA:DES-CBC3-SHA';
+
+use LWP::UserAgent;
+use Getopt::Std;
+
+sub init () {
+	# specify valid switches
+	getopts('dhqxu:') || usage;
+	print "Test";
+
+	if ($opt_u) {
+		$>=getpwnam($opt_u);
+	}
+
+	$version	='0.9.3';				# version number
+	usage() if $opt_h;
+	usage() unless $ARGV[0];
+
+	$minadjust	=1;						# minimum time step in seconds
+	$maxadjust	=1800;					# maximum time step in seconds
+	$datecommand='/bin/date';			# "date" command to set time
+	$dateparam='-s';					# "date" parameter to set time
+
+	$userid='';							# userid for proxy servers
+	$password='';						# password for proxy server
+
+	if ( $ARGV[0] =~ /^http/i ) {
+		$server=$ARGV[0];
+	} else {
+		$server = 'http://'.$ARGV[0];
+	}
+
+}
+
+sub usage() {
+
+	print STDERR <<USAGE;
+
+htpdate version $version
+Usage: $0 [-dhqx] [-u userid] <URL>
+
+	-d	debug
+	-h	show this help
+	-q	quiet
+	-u	userid to run as
+	-x	do not set the time (only show)
+
+	e.g. $0 -x http://www.microsoft.com
+
+USAGE
+
+	exit;
+
+}
+
+
+init();
+
+$ua = LWP::UserAgent->new;
+$ua->agent("htpdate/$version");
+$ua->timeout(5);
+$ua->env_proxy;
+$ua->max_redirect(1);					# do not follow redirects
+
+# prepare the HTTP request header
+$req = HTTP::Request->new(HEAD => $server );
+
+# set proxy authentication, if applicable
+$req->proxy_authorization_basic ( $userid, $password ) if ( $userid );
+
+# force a clean time stamp from the webserver (not a cached one)
+$req->header(Pragma => "no-cache");
+#$req->header(Pragma => "no-cache", Connection => "close");
+
+# send the request to the webserver
+print $req->as_string if $opt_d;
+
+# receive the request
+$res = $ua->request($req);
+
+# checking on "$res->is_success" will fail in case of redirects,
+# so I use "$res->date" in stead
+if ( $res->date ) {
+	# $res->as_string output is formatted by perl!
+	print $res->as_string if $opt_d;
+
+	# calculate the difference between local and remote time
+	$diff = $res->date - time();
+
+	print "$server => $diff second(s)\n" unless $opt_q;
+	if ( abs($diff) > $maxadjust ) {
+		print STDERR "Refuses clock setting ($diff sec)\n" unless $opt_q;
+	} elsif ( abs($diff) <= $minadjust ) {
+		print "Time not changed ($diff sec)\n" unless $opt_q;
+	} else {
+		$newtime = scalar localtime(time + $diff);
+		if ( ! $opt_q ) {
+			print "Setting time...\n";
+			$>=0 if ($opt_u);
+			open (FD, "-|", $datecommand, $dateparam, $newtime) || die "Error: $!";
+			if ( $? != 0 ) {
+				print LOG 'An error occured setting the time';
+				for (<FD>) {
+					print LOG; 
+				}
+			}
+			close(FD);
+			$>=getpwnam($opt_u) if ($opt_u);
+		}
+	}
+} else {
+	print STDERR "No suitable server found\n" unless $opt_q;
+}

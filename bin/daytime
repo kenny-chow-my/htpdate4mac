@@ -1,0 +1,20 @@
+#! /usr/bin/perl -w
+#
+# A Perl implementation of the 'good old' daytime protocol
+
+use strict;
+use IO::Socket;
+
+if ( $#ARGV != 0 ) {
+	print "Daytime\n";
+	print "Usage: $0 <host>\n\n";
+	print "e.g.   $0 nist.time.gov\n\n";
+	exit;
+}
+
+my $handle = IO::Socket::INET->new
+			(Proto		=> 'tcp',
+			 PeerAddr	=> $ARGV[0],
+			 PeerPort	=> 'daytime' );
+
+print <$handle>;

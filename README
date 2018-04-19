@@ -1,0 +1,25 @@
+Htpdate v0.9.3
+==============
+
+If you need support or have other feedback, you can send me an e-mail
+at Eddy@cleVervest.com.
+
+
+File locations
+==============
+
+/bin/
+	- daytime			perl scripts that sychronizes time with TCP port 13
+
+/sbin/
+	- htpdate			perl scripts that synchronizes time onces
+	- htpdate-light		similar to htpdate, but doesn't require LWP
+						no support for authentication proxies of HTTPS
+	- htpd				daemon version of htpdate, which runs in the
+						backgroup and sycs time
+
+/etc/
+	- htp.conf			example configuration file for htpd
+
+/etc/rc.d/
+	- htpd				basic init script for htpd

@@ -1,0 +1,191 @@
+#!/usr/bin/perl
+#
+# htpd time poller daemon version 0.9.3
+# Copyright (C) 2004 Eddy Vervest
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# http://www.gnu.org/copyleft/gpl.html
+
+# Proxy setting are read from environment 
+# e.g.:
+# export HTTP_PROXY='http://wwwproxy.xs4all.nl:8080'
+#
+# or set the proxy value here
+#
+# $ENV{HTTP_PROXY} = 'http://wwwproxy.xs4all.nl:8080';
+#
+#
+# Specify SSL ciphers (optional)
+#
+# $ENV{HTTPS_VERSION} = 3;
+# $ENV{CRYPT_SSLEAY_CIPHER} = 'DHE-RSA-AES256-SHA:DES-CBC3-SHA';
+
+use LWP::UserAgent;
+use Getopt::Std;
+use IO::Handle;
+
+sub usage() {
+
+	print STDERR <<USAGE;
+
+htpdate $version
+Usage: $0 [-dhq] [-c file] [-l file ] [-p file ] [-t timeout] [-u userid]
+
+	-c	configuration file
+	-d	debug mode
+	-h	show this help
+	-l	log file
+	-p	pid file
+	-q	quiet operation
+	-t	sessions timeout in seconds (5 sec default)
+	-u	userid to run as
+
+	e.g. $0 -c /etc/htp.conf -l /var/log/htp.log www.microsoft.com
+
+USAGE
+
+	exit;
+
+}
+
+sub init () {
+	getopts('c:dhl:p:qt:u:') || usage;
+	usage() if $opt_h;
+
+	$version='0.9.3';
+	$minadjust=1;						# minimum time step, default 1 sec.
+	$maxadjust=1800;					# maximum time step, default 30 min.
+	$minpoll=12;						# 2^12 = 4096 seconds (1h,8m,16s)
+	$maxpoll=18;						# 2^20 = 1048576 seconds (about 12d)
+	$poll=$minpoll;
+
+	$datecommand='/bin/date';			# "date" command to set the time
+	$dateparam='-s';					# "date" parameter to set the time
+
+	$userid='';                         # userid for proxy server
+	$password='';                       # password for proxy server
+
+	$timeout=$opt_t	|| '5';				# timeout value for http requests
+	$config=$opt_c	|| '/etc/htp.conf';
+	$logfile=$opt_l	|| '/var/log/htp.log';
+	$pidfile=$opt_p	|| '/var/run/htpd.pid';
+
+	$pid=fork unless $opt_d;
+	if ($pid) {
+		open ( PID , ">$pidfile" ) || die "Cannot open pid file $pidfile";
+		print PID $pid;
+		close PID;
+		exit unless $opt_d;
+	}
+
+	open ( LOG, ">>$logfile" ) || die "Can not open logfile $logfile\n";
+	LOG->autoflush(1);
+	print LOG "$0 started at ", scalar localtime(), "\n";
+
+	# Drop privileges only after opening the pid and log files.
+	$>=getpwnam($opt_u) if ($opt_u);
+}
+
+
+sub settime {
+
+	$newtime = scalar localtime( time() + $median);
+	if ( ! $opt_q ) {
+		print scalar localtime(), " => $newtime\n" if $opt_d;
+		print LOG scalar localtime(), " => $newtime\n";
+		
+		# Only elevate when we need it!
+		$>=0 if ($opt_u);
+		open (FD, "-|", $datecommand, $dateparam, $newtime) || die "Error: $!";
+		if ( $? != 0 ) {
+			print LOG 'An error occured setting the time';
+			for (<FD>) {
+				print LOG;
+			}
+		}
+		close(FD);
+		$>=getpwnam($opt_u) if ($opt_u);
+	}
+}
+
+
+init();
+
+$ua = LWP::UserAgent->new;
+$ua->agent("htpdate/$version");
+$ua->timeout($timeout);
+$ua->env_proxy;
+$ua->max_redirect(1);					# do not follow redirects
+
+
+while (1) {
+
+@dl=();
+@sdl=();
+%d=();
+
+open ( HTP, "<$config" ) || die "Cannot read config file $config";
+
+while (<HTP>) {
+
+	# ship empty and comment lines
+	next if (/^($|;|#)/);
+
+	chomp;
+	$url = $_;
+
+	$req = HTTP::Request->new(HEAD => $url );
+	$req->proxy_authorization_basic ( $userid, $password ) if ( $userid );
+	$req->header(Pragma => "no-cache");
+	print $req->as_string if $opt_d;
+	$res = $ua->request($req);
+
+	if ( $res->date ) {
+		# $res->as_string output is formatted by perl!
+		print $res->as_string if $opt_d;
+
+		# calculate the difference between local and remote 
+		$delta = $res->date - time();
+		$d{$url} = $delta;
+		push @dl, $delta;
+	}
+}
+
+$num = int ( keys %d ) ;
+print "Number of the succesfull hits $num\n" if $opt_d;
+
+# Calculate the median
+# No complex cluster algorithms like ntpd, just the median
+$num /= 2;
+@sdl = sort { $a <=> $b } @dl;
+$median = @sdl[$num-1];
+
+# Print successful polls, if in debug mode
+if ( $opt_d ) {
+	foreach $t ( keys %d ) {
+		if ( $d{$t} == $median ) {
+			print "*";
+		} else {
+			print "-";
+		}
+		print " $d{$t}\t$t\n";
+	}
+}
+
+# Calculate current sleep interval (in seconds)
+$interval=2 ** $poll;
+printf "Next poll in about $interval seconds (poll=$poll)\n" if $opt_d;
+sleep($interval);
+
+# Calculate the new poll interval
+if ( abs($median) <= $minadjust ) {
+	$poll++ if ( $poll < $maxpoll );
+} else {
+	$poll-- if ( $poll > $minpoll );
+	settime();
+}
+
+}

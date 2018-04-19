@@ -1,0 +1,69 @@
+#! /usr/bin/perl
+#
+# htpd time poller daemon version 0.9.3
+# Copyright (C) 2005 Eddy Vervest
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# http://www.gnu.org/copyleft/gpl.html
+
+# This script is similar to the full htpdate script, but it;
+#	- does not use LWP, so it is much smaller
+#	- does not handle basic authentication request of proxy servers
+#	- does not support HTTPS requests
+
+use IO::Socket;
+use Getopt::Std;
+
+$version='0.9.3';
+
+(getopts('dp:s:') and $ARGV[0] ) || die <<USAGE;
+Usage: $0 [options] <webserver hostname>
+
+htpdate-light $version 
+
+Options:
+    -d                    verbose mode
+    -s <proxy server>
+    -p <port number>
+
+	e.g. $0 -d -s wwwproxy.xs4all.nl -p 8080 www.ibm.com
+
+USAGE
+
+$datecommand='date -s';			# 'set system time' command
+
+if ( $opt_s ) {
+	$port = $opt_p || 8080;
+} else {
+	$port = $opt_p || 80;
+}
+
+if ( $opt_s ) {
+	$request = "HEAD http://$ARGV[0]";
+	$connect_host = $opt_s;
+} else {
+	$request="HEAD /";
+	$connect_host = $ARGV[0];
+}
+$request .= " HTTP/1.0\r\nHost: $ARGV[0]\r\nUser-Agent:htpdate-light/$version\r\nPragma: no-cache\r\n\r\n";
+
+$socket = IO::Socket::INET->new	(
+	Proto		=> 'tcp',
+	PeerAddr	=> $connect_host,
+	PeerPort	=> $port
+);
+
+# Send HEAD requests
+print $request if $opt_d;
+print $socket $request;
+while (defined ( $res = <$socket>) ) {
+	print "$res" if $opt_d;
+	if ( $res =~ /Date: / ) {
+		$res =~ s/Date: //;
+		print "Setting time... ", `$datecommand \"$res\"`;
+		close $socket;
+	}
+}
