@@ -33,13 +33,13 @@ use POSIX qw(strftime);
 sub init () {
 	# specify valid switches
 	getopts('dhqxu:') || usage;
-	print "Test";
+	
 
 	if ($opt_u) {
 		$>=getpwnam($opt_u);
 	}
 
-	$version	='0.9.3';				# version number
+	$version	='0.9.4';				# version number
 	usage() if $opt_h;
 	usage() unless $ARGV[0];
 
@@ -121,7 +121,7 @@ if ( $res->date ) {
 		print "Time not changed ($diff sec)\n" unless $opt_q;
 	} else {
 		$newtime = scalar localtime(time + $diff);
-		$newtime2 = strftime "%m%d%H%M%Y", localtime(time + $diff);
+		$newtime2 = strftime "%m%d%H%M%Y.%S", localtime(time + $diff);
 		if ( ! $opt_q ) {
 			print "Setting time... $newtime \n";
 			$>=0 if ($opt_u);
